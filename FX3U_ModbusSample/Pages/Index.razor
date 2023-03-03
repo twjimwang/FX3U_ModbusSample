@@ -1,0 +1,131 @@
+﻿@page "/"
+@using System.IO.Ports
+@using NModbus
+@using NModbus.Serial
+@inject ISnackbar Snackbar
+
+<PageTitle>Mitsubishi-FX3U</PageTitle>
+
+<MudGrid>
+    <MudItem xl="12">
+        <MudPaper Class="pa-16 ma-2">
+            <MudForm Model="@_model" @ref="form">
+                <MudTextField T="string" @bind-value="_model.SerialPort" Label="COM Port" Required="true" RequiredError="COM Port 不可為空" />
+                <MudTextField T="int" @bind-value="_slaveAddress" Label="站號" Required="true" RequiredError="站號不可為空" />
+                <MudTextField T="int" @bind-value="_model.BaudRate" Label="BaudRate" Required="true" RequiredError="BaudRate 不可為空" />
+                <MudTextField T="int" @bind-value="_model.DataBits" Label="DataBits" Required="true" RequiredError="DataBits 不可為空" />
+                <MudSelect T="Parity" Label="Parity" Variant="Variant.Outlined" @bind-Value="_model.Parity" Class="mt-3"
+                           AnchorOrigin="Origin.BottomCenter">
+                    @foreach (Parity parity in Enum.GetValues(typeof(Parity)))
+                    {
+                        <MudSelectItem Value="parity">@Enum.GetName(typeof(Parity),parity)</MudSelectItem>
+                    }
+                </MudSelect>
+                <MudSelect T="StopBits" Label="StopBits" Variant="Variant.Outlined" @bind-Value="_model.StopBits" Class="mt-3"
+                           AnchorOrigin="Origin.BottomCenter">
+                    @foreach (StopBits stopBits in Enum.GetValues(typeof(StopBits)))
+                    {
+                        <MudSelectItem Value="stopBits">@Enum.GetName(typeof(StopBits),stopBits)</MudSelectItem>
+                    }
+                </MudSelect>
+                <div class="d-flex align-center mt-3">
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" DisableElevation="true" Disabled="_serialPort is {IsOpen: true }"
+                               OnClick="Connect">連線</MudButton>
+                    <MudButton Variant="Variant.Filled" Color="Color.Secondary" DisableElevation="true" Disabled="_serialPort is null || !_serialPort.IsOpen"
+                               OnClick="Disconnect" Class="mx-2">中斷</MudButton>
+                </div>
+            </MudForm>
+        </MudPaper>
+        <MudPaper Class="pa-16 ma-2">
+            <MudSelect T="PLCAddress" Label="類型" Variant="Variant.Outlined" AnchorOrigin="Origin.BottomCenter" @bind-value="_plcAddress">
+                @foreach (var plcAddress in _plcAddresses)
+                {
+                    <MudSelectItem Value="plcAddress">@plcAddress.Name</MudSelectItem>
+                }
+            </MudSelect>
+
+            <MudNumericField @bind-Value="_addressPoint" Label="位置" Variant="Variant.Text" />
+
+            <MudButton Variant="Variant.Filled" Color="Color.Secondary" DisableElevation="true" OnClick="Read" Disabled="_serialPort is null || !_serialPort.IsOpen" Class="mx-2 mt-3">讀取</MudButton>
+            <MudTextField Value="_result" Label="結果" Variant="Variant.Text"></MudTextField>
+        </MudPaper>
+    </MudItem>
+</MudGrid>
+
+@code {
+    MudForm form;
+    readonly SerialPortConfig _model = new();
+    readonly List<PLCAddress> _plcAddresses = new();
+    SerialPort _serialPort;
+    IModbusMaster master;
+    PLCAddress _plcAddress;
+    int _addressPoint;
+    string _result;
+    int _slaveAddress;
+
+    protected override void OnInitialized()
+    {
+        _plcAddresses.Add(new PLCAddress { Name = "D", AddressBase = 0 });
+        _plcAddresses.Add(new PLCAddress { Name = "M", AddressBase = 8192 });
+    }
+
+    public async Task Connect()
+    {
+        try
+        {
+            await form.Validate();
+            if (form.IsValid)
+            {
+                _serialPort = new SerialPort();
+                _serialPort.PortName = _model.SerialPort;
+                _serialPort.BaudRate = _model.BaudRate;
+                _serialPort.DataBits = _model.DataBits;
+                _serialPort.Parity = _model.Parity;
+                _serialPort.StopBits = _model.StopBits;
+                _serialPort.Open();
+                master = new ModbusFactory().CreateRtuMaster(_serialPort);
+            }
+        }
+        catch (Exception e)
+        {
+            Snackbar.Add(e.Message, Severity.Error);
+        }
+    }
+
+    public void Disconnect()
+    {
+        _serialPort.Close();
+        _serialPort.Dispose();
+        _serialPort = null;
+    }
+
+    public async Task Read()
+    {
+        var address = (ushort)(_plcAddress.AddressBase + _addressPoint);
+        _result = _plcAddress.Name switch
+        {
+            "M" => (await master.ReadCoilsAsync((byte)_slaveAddress, address, 1)).First().ToString(),
+            "D" => (await master.ReadHoldingRegistersAsync((byte)_slaveAddress, address, 1)).First().ToString(),
+            _ => throw new ArgumentOutOfRangeException()
+        };
+    }
+
+    public class PLCAddress
+    {
+        public string Name { get; set; }
+        public int AddressBase { get; set; }
+    }
+
+    public class SerialPortConfig
+    {
+        public string SerialPort { get; set; }
+
+        public int BaudRate { get; set; }
+
+        public int DataBits { get; set; }
+
+        public Parity Parity { get; set; }
+
+        public StopBits StopBits { get; set; }
+    }
+}
